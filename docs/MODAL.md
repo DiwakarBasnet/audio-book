@@ -35,17 +35,57 @@ The implementation follows Modal's [ASGI app deployment](https://modal.com/docs/
 | Endpoint | Runtime | Narrator/settings | Output |
 | --- | --- | --- | --- |
 | `kokoro` | Kokoro 0.9.4 / Kokoro-82M | `am_onyx`, US English, speed 1.0 | Mono PCM16, 24 kHz |
-| `chatterbox` | chatterbox-tts 0.1.6, original English Chatterbox | Built-in voice, exaggeration 0.5, CFG 0.5, seed 42 | Mono PCM16, model sample rate |
+| `chatterbox` | chatterbox-tts 0.1.6, original English Chatterbox | Built-in or sample-cloned voice, exaggeration 0.5, CFG 0.5, seed 42 | Mono PCM16, model sample rate |
 
 This compares the original English Chatterbox model, rather than Turbo or Multilingual. The initial adapters target an **English edition** of your book. They do not provide a fair comparison for a Spanish-language edition. Kokoro supports more languages upstream, but this deployment validates US/UK English voices only.
 
-Change constants at the top of `deployment/modal_app.py` and redeploy to try another narrator or configuration. Kokoro voice changes also change the voice file downloaded into its image. Remote speed is configured in the deployment, not with client `--speed`. Chatterbox uses its built-in reference voice; custom voice cloning is not exposed. Its seed reduces random variation, without guaranteeing bit-identical GPU output.
+Change constants at the top of `deployment/modal_app.py` and redeploy to try another narrator or configuration. Kokoro voice changes also change the voice file downloaded into its image. Remote speed is configured in the deployment, not with client `--speed`. Chatterbox uses its built-in voice by default; set `CHATTERBOX_REFERENCE_AUDIO` to deploy a sample-cloned narrator (see below). Its seed reduces random variation, without guaranteeing bit-identical GPU output.
 
 Both endpoints request one L4 GPU, scale to zero after 120 idle seconds, and allow at most one container each. Each container loads one model and serializes inference; a simultaneous synthesis request receives HTTP 429. After a failed request, rerun the render command. The client does not automatically retry.
 
 Images download the primary weights with `hf download` during build. The package versions are pinned separately for each model; they are not installed in your local environment. Primary weights use the repositories' default revisions at build time. Their actual file hashes are included in the engine identity, so a rebuild with changed weights cannot silently reuse another voice's job. Modal may cache an unchanged build layer. To select a specific weight revision, add `--revision COMMIT_SHA` to its `hf download` command and redeploy.
 
 The reference APIs are [Kokoro](https://github.com/hexgrad/kokoro) and [Chatterbox](https://github.com/resemble-ai/chatterbox). Main weights are baked into the images; library auxiliary resources may still be fetched at startup. The first build and cold request can take longer. The client allows up to 300 seconds for model info and each synthesis request; Modal's web request limits also apply. Use small chunks if a request times out.
+
+## Clone a narrator with Chatterbox
+
+Put a clean, single-speaker reference recording in `voices/narrator.wav`. A 6–10 second clip of clear speech without music or long silences is a useful starting point. The deployment accepts mono or stereo **PCM16 WAV**, at least 8 kHz, nonempty and at most 30 seconds (under 20 MiB). `voices/` is ignored by Git.
+
+To convert an MP3 or another recording to a suitable 10-second mono WAV:
+
+```bash
+mkdir -p voices
+ffmpeg -i sample.mp3 -t 10 -ac 1 -ar 24000 -c:a pcm_s16le voices/narrator.wav
+```
+
+Set this constant in `deployment/modal_app.py`:
+
+```python
+CHATTERBOX_REFERENCE_AUDIO = 'voices/narrator.wav'
+```
+
+Paths are relative to the project root; absolute paths also work. The local clip is validated before cloud build, then copied to `/reference/narrator.wav` in the Chatterbox image. Redeploy to include it:
+
+```bash
+uv run --extra modal modal deploy deployment/modal_app.py
+```
+
+At container startup the adapter calls Chatterbox's `prepare_conditionals` once with that clip. Subsequent chunks reuse the prepared speaker conditionals; the client sends text as before. This follows the [Chatterbox reference-audio API](https://github.com/resemble-ai/chatterbox/blob/master/src/chatterbox/tts.py). The recording is included in the cloud image, and the public Chatterbox endpoint uses that voice for all callers.
+
+Prepare a **new job** for this narrator and render a short sample. Replace the dummy URL with the Chatterbox base URL printed by your deployment:
+
+```bash
+uv run audiobook prepare examples/sample.txt --output output/chatterbox-clone --chunk-size 300
+uv run audiobook render output/chatterbox-clone \
+  --endpoint https://your-workspace--audiobook-tts-chatterbox.us-east.modal.run \
+  --limit 3
+```
+
+Listen to `output/chatterbox-clone/sample.wav`. To narrate your book, prepare its reviewed TXT into another new directory and render that directory using the same endpoint. Remove `--limit` for full conversion; optionally add `--mp3`.
+
+The exact reference file's SHA-256 is part of the voice identity. Replacing the clip requires redeployment and a new prepared job; old audio cannot be reused as if it were the new narrator. Renaming an identical clip does not change its identity. During an unchanged deployment, local resume and Modal's audio cache continue to reuse completed audio normally. Set `CHATTERBOX_REFERENCE_AUDIO = None` and redeploy to return to the built-in voice.
+
+Cloning quality and pronunciation need a listening test. The automated checks validate reference format, one-time conditioning, and voice/cache separation; they do not evaluate a real cloned voice.
 
 ## Compare the same text
 

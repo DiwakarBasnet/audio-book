@@ -3,7 +3,11 @@
 Two independently built model services expose the same HTTP API. No local GPU needed.
 """
 
+from pathlib import Path
+
 import modal
+
+from audio_book.neural_tts import reference_fingerprint
 
 app = modal.App('audiobook-tts')
 kokoro_cache = modal.Volume.from_name('audiobook-kokoro-audio', create_if_missing=True)
@@ -17,6 +21,10 @@ KOKORO_DEVICE = 'cuda'
 CHATTERBOX_EXAGGERATION = 0.5
 CHATTERBOX_CFG_WEIGHT = 0.5
 CHATTERBOX_SEED = 42
+# Optional local PCM16 WAV, relative to the project root (or an absolute path).
+# Example: 'voices/narrator.wav'. None keeps Chatterbox's built-in voice.
+CHATTERBOX_REFERENCE_AUDIO: str | None = None
+CHATTERBOX_REMOTE_REFERENCE = '/reference/narrator.wav'
 
 kokoro_image = (
     modal.Image.debian_slim(python_version='3.11')
@@ -47,8 +55,19 @@ chatterbox_image = (
     .run_commands(
         'hf download ResembleAI/chatterbox ve.safetensors t3_cfg.safetensors s3gen.safetensors tokenizer.json conds.pt --local-dir /models/chatterbox'
     )
-    .add_local_python_source('audio_book')
 )
+
+if modal.is_local() and CHATTERBOX_REFERENCE_AUDIO is not None:
+    reference = Path(CHATTERBOX_REFERENCE_AUDIO).expanduser()
+    if not reference.is_absolute():
+        reference = Path(__file__).resolve().parent.parent / reference
+    # Fail before a cloud build/GPU allocation if the local sample is invalid.
+    reference_fingerprint(reference)
+    chatterbox_image = chatterbox_image.add_local_file(
+        reference, CHATTERBOX_REMOTE_REFERENCE, copy=True,
+    )
+
+chatterbox_image = chatterbox_image.add_local_python_source('audio_book')
 
 
 @app.function(image=kokoro_image, gpu='T4' if KOKORO_DEVICE == 'cuda' else None,
@@ -77,6 +96,8 @@ def chatterbox():
     from audio_book.server import create_app
     return create_app(
         lambda: ChatterboxEngine(Path('/models/chatterbox'), CHATTERBOX_EXAGGERATION,
-                                 CHATTERBOX_CFG_WEIGHT, CHATTERBOX_SEED),
+                                 CHATTERBOX_CFG_WEIGHT, CHATTERBOX_SEED,
+                                 reference_audio=(Path(CHATTERBOX_REMOTE_REFERENCE)
+                                                  if CHATTERBOX_REFERENCE_AUDIO is not None else None)),
         cache_dir=Path('/audio-cache'), commit_cache=chatterbox_cache.commit,
     )

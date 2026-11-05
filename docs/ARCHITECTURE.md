@@ -63,3 +63,7 @@ Neural engine identities bind weight/configuration hashes, synthesis settings, a
 Each endpoint also has a persistent Modal audio Volume. A SHA-256 of engine identity plus exact request text addresses its cached WAV. Successful inference is committed before the response is sent. This covers the lost-response gap after remote completion; local resume avoids the request entirely when a valid client checkpoint exists. Failed work before a durable checkpoint can still be repeated. The cache is designed for one deployment per Volume and retains speech until manually removed.
 
 See [MODAL.md](MODAL.md) for deployment, comparison, and the precise resume guarantees.
+
+## Reference narration with Chatterbox
+
+`CHATTERBOX_REFERENCE_AUDIO` optionally points to a local PCM16 WAV. Deployment validates and copies that sample into the image; the remote engine validates it again and prepares speaker conditionals once at startup. Every generated subsegment then reuses that narrator. The sample's content hash participates in engine identity, preventing resume/cache reuse across different reference voices. No reference path or audio upload is accepted by the public HTTP API: narrator selection is a deployment configuration. See [MODAL.md](MODAL.md) for sample preparation and commands.

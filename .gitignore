@@ -12,6 +12,7 @@ wheels/
 # Books, voices, and generated audio stay local
 books/
 models/
+voices/
 output/
 *.onnx
 *.onnx.json

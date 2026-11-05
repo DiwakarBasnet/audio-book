@@ -4,9 +4,32 @@ import hashlib
 from importlib.metadata import distributions
 import json
 from pathlib import Path
+import wave
 
 from .text import chunk_text
 from .tts import digest
+
+
+def reference_fingerprint(reference: Path) -> str:
+    """Validate a short PCM16 reference and bind caching to its exact contents."""
+    if not reference.is_file():
+        raise ValueError(f'Chatterbox reference audio not found: {reference}')
+    if reference.stat().st_size > 20 * 1024 * 1024:
+        raise ValueError('Reference audio must be a WAV file smaller than 20 MiB.')
+    try:
+        with wave.open(str(reference), 'rb') as audio:
+            if (audio.getcomptype() != 'NONE' or audio.getsampwidth() != 2
+                    or audio.getnchannels() not in {1, 2}):
+                raise ValueError('Reference audio must be mono or stereo PCM16 WAV.')
+            duration = audio.getnframes() / audio.getframerate()
+            if not 0 < duration <= 30 or audio.getframerate() < 8000:
+                raise ValueError('Reference WAV must be nonempty, at most 30 seconds, and at least 8 kHz.')
+            expected = audio.getnframes() * audio.getnchannels() * audio.getsampwidth()
+            if len(audio.readframes(audio.getnframes())) != expected:
+                raise ValueError('Reference WAV is truncated.')
+    except (wave.Error, EOFError) as exc:
+        raise ValueError('Reference audio must be a readable PCM16 WAV file.') from exc
+    return digest(reference)
 
 
 def engine_identity(kind: str, files: list[Path], settings: dict) -> str:
@@ -64,15 +87,22 @@ class KokoroEngine:
 
 class ChatterboxEngine:
     def __init__(self, directory: Path, exaggeration: float = 0.5,
-                 cfg_weight: float = 0.5, seed: int = 42):
+                 cfg_weight: float = 0.5, seed: int = 42,
+                 reference_audio: Path | None = None):
+        reference_hash = reference_fingerprint(reference_audio) if reference_audio is not None else None
         from chatterbox.tts import ChatterboxTTS
         files = [directory / name for name in
                  ('ve.safetensors', 't3_cfg.safetensors', 's3gen.safetensors', 'tokenizer.json', 'conds.pt')]
         self.identity = engine_identity('chatterbox', files, {
-            'voice': 'builtin', 'exaggeration': exaggeration, 'cfg_weight': cfg_weight,
+            'voice': 'reference' if reference_hash else 'builtin',
+            'reference_sha256': reference_hash,
+            'exaggeration': exaggeration, 'cfg_weight': cfg_weight,
             'seed': seed, 'device': 'cuda', 'internal_chunk_chars': 250,
         })
         self.model = ChatterboxTTS.from_local(str(directory), device='cuda')
+        if reference_audio is not None:
+            # Prepare once at startup; generate() then reuses these speaker conditionals.
+            self.model.prepare_conditionals(str(reference_audio), exaggeration=exaggeration)
         self.exaggeration, self.cfg_weight, self.seed = exaggeration, cfg_weight, seed
 
     def synthesize(self, text: str, target: Path) -> None:
