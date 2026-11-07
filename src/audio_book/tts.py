@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 from typing import Protocol
 from urllib.request import Request, urlopen
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 import wave
 
 
@@ -47,7 +47,7 @@ class PiperEngine:
 
 
 class RemoteEngine:
-    def __init__(self, endpoint: str, timeout: float = 300):
+    def __init__(self, endpoint: str, timeout: float = 300, voice: str | None = None):
         self.endpoint = endpoint.strip().rstrip('/')
         parsed = urlsplit(self.endpoint)
         if (parsed.scheme not in {'http', 'https'} or not parsed.hostname
@@ -56,16 +56,23 @@ class RemoteEngine:
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError('Request timeout must be a positive finite number of seconds.')
         self.timeout = timeout
+        self.voice = voice
         self.headers = {'Content-Type': 'application/json'}
         # A scaled-to-zero Modal container may need time to initialize its model.
-        print(f'Connecting to {self.endpoint}/info (timeout {timeout:g}s)...', file=sys.stderr, flush=True)
-        with urlopen(Request(self.endpoint + '/info', headers=self.headers), timeout=self.timeout) as response:
+        info_url = self.endpoint + '/info'
+        if voice is not None:
+            info_url += '?' + urlencode({'voice': voice})
+        print(f'Connecting to {info_url} (timeout {timeout:g}s)...', file=sys.stderr, flush=True)
+        with urlopen(Request(info_url, headers=self.headers), timeout=self.timeout) as response:
             self.identity = json.load(response)['identity']
         print('Remote model ready.', file=sys.stderr, flush=True)
 
     def synthesize(self, text: str, target: Path) -> None:
+        payload = {'text': text}
+        if self.voice is not None:
+            payload['voice'] = self.voice
         request = Request(self.endpoint + '/synthesize', headers=self.headers,
-                          data=json.dumps({'text': text}).encode())
+                          data=json.dumps(payload).encode())
         print(f'Requesting speech for {len(text)} characters...', file=sys.stderr, flush=True)
         with urlopen(request, timeout=self.timeout) as response:
             if response.headers.get('X-Voice-Identity') != self.identity:

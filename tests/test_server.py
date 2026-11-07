@@ -95,6 +95,7 @@ class ServerTests(unittest.TestCase):
         engine.headers = {}
         engine.identity = 'original-model'
         engine.timeout = 300
+        engine.voice = None
         with tempfile.TemporaryDirectory() as directory, patch('audio_book.tts.urlopen', return_value=response):
             target = Path(directory) / 'audio.wav'
             with self.assertRaisesRegex(ValueError, 'voice changed'):

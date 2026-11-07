@@ -39,13 +39,36 @@ The implementation follows Modal's [ASGI app deployment](https://modal.com/docs/
 
 This compares the original English Chatterbox model, rather than Turbo or Multilingual. The initial adapters target an **English edition** of your book. They do not provide a fair comparison for a Spanish-language edition. Kokoro supports more languages upstream, but this deployment validates US/UK English voices only.
 
-Change constants at the top of `deployment/modal_app.py` and redeploy to try another narrator or configuration. Kokoro voice changes also change the voice file downloaded into its image. Remote speed is configured in the deployment, not with client `--speed`. Chatterbox uses its built-in voice by default; set `CHATTERBOX_REFERENCE_AUDIO` to deploy a sample-cloned narrator (see below). Its seed reduces random variation, without guaranteeing bit-identical GPU output.
+Change constants at the top of `deployment/modal_app.py` and redeploy to try another narrator or configuration. Kokoro bundles `am_onyx` and `af_heart`; select either per request with `--voice`. Adding other voices to `KOKORO_VOICES` requires redeployment to bundle their voice files. Remote speed is configured in the deployment, not with client `--speed`. Chatterbox uses its built-in voice by default; set `CHATTERBOX_REFERENCE_AUDIO` to deploy a sample-cloned narrator (see below). Its seed reduces random variation, without guaranteeing bit-identical GPU output.
 
 Both endpoints request one L4 GPU, scale to zero after 120 idle seconds, and allow at most one container each. Each container loads one model and serializes inference; a simultaneous synthesis request receives HTTP 429. After a failed request, rerun the render command. The client does not automatically retry.
 
 Images download the primary weights with `hf download` during build. The package versions are pinned separately for each model; they are not installed in your local environment. Primary weights use the repositories' default revisions at build time. Their actual file hashes are included in the engine identity, so a rebuild with changed weights cannot silently reuse another voice's job. Modal may cache an unchanged build layer. To select a specific weight revision, add `--revision COMMIT_SHA` to its `hf download` command and redeploy.
 
 The reference APIs are [Kokoro](https://github.com/hexgrad/kokoro) and [Chatterbox](https://github.com/resemble-ai/chatterbox). Main weights are baked into the images; library auxiliary resources may still be fetched at startup. The first build and cold request can take longer. The client allows up to 300 seconds for model info and each synthesis request; Modal's web request limits also apply. Use small chunks if a request times out.
+
+## Select a Kokoro voice per request
+
+The Kokoro deployment includes `am_onyx` and `af_heart`, sharing one loaded model. Redeploy after this code update to include both voice files:
+
+```bash
+uv run --extra modal modal deploy deployment/modal_app.py
+uv run audiobook prepare examples/sample.txt --output output/kokoro-heart --chunk-size 300
+uv run audiobook render output/kokoro-heart --endpoint "$KOKORO_URL" --voice af_heart --limit 3
+```
+
+Use `--voice am_onyx` for the other narrator. Omitting the flag uses `KOKORO_VOICE`, currently `am_onyx`. The CLI selects the identity with `GET /info?voice=af_heart` and includes the voice in every synthesis request. Discover supported voices and the default using `GET /info`.
+
+Direct HTTP requests also accept the voice:
+
+```bash
+curl --fail "$KOKORO_URL/synthesize" \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"A journey begins with a single decision.","voice":"af_heart"}' \
+  --output heart.wav
+```
+
+An unknown voice returns HTTP 400. Chatterbox and Piper endpoints reject explicit voice selection; Chatterbox's default/cloned narrator remains deployment configuration. Cache entries and resume identities include the selected Kokoro voice. Use a separate prepared job directory for each voice; repeated renders with the same voice reuse completed chunks. If an older job's stored engine identity differs after redeployment, prepare a new directory.
 
 ## Clone a narrator with Chatterbox
 

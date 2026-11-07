@@ -18,6 +18,7 @@ def main() -> int:
     backend = speak.add_mutually_exclusive_group(required=True)
     backend.add_argument('--model', type=Path, help='Local Piper .onnx model')
     backend.add_argument('--endpoint', help='Hosted TTS API base URL')
+    speak.add_argument('--voice', help='Kokoro voice name, e.g. am_onyx or af_heart (requires --endpoint)')
     speak.add_argument('--speed', type=float, default=1.0, help='Local voice speed multiplier (0.5–2)')
     speak.add_argument('--limit', type=int, help='Render only the first N chunks to sample.wav')
     speak.add_argument('--mp3', action='store_true', help='Also encode MP3 using FFmpeg')
@@ -34,7 +35,9 @@ def main() -> int:
                                  'use the directory created by audiobook prepare.')
             if args.endpoint and args.speed != 1.0:
                 raise ValueError('Remote speed is configured on the server with TTS_SPEED.')
-            engine = (RemoteEngine(args.endpoint, timeout=args.request_timeout)
+            if args.voice is not None and args.endpoint is None:
+                raise ValueError('--voice requires a remote --endpoint. Local Piper uses its model voice.')
+            engine = (RemoteEngine(args.endpoint, timeout=args.request_timeout, voice=args.voice)
                       if args.endpoint else PiperEngine(args.model, args.speed))
             print(render(args.job, engine, args.limit, args.mp3))
         return 0

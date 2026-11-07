@@ -52,12 +52,14 @@ Replace the dummy endpoint with your deployed Kokoro URL:
 ```bash
 uv run audiobook render output/motorcycle-kokoro \
   --endpoint https://your-workspace--audiobook-tts-kokoro.us-east.modal.run \
-  --limit 3
+  --voice af_heart --limit 3
 
 uv run audiobook render output/motorcycle-kokoro \
   --endpoint https://your-workspace--audiobook-tts-kokoro.us-east.modal.run \
-  --mp3
+  --voice af_heart --mp3
 ```
+
+Kokoro accepts `--voice am_onyx` or `--voice af_heart`. Omit `--voice` to use the configured default (`am_onyx`). Keep the same voice when resuming; use a new job directory to switch voices.
 
 Outputs are `sample.wav`, `audiobook.wav`, and, with `--mp3`, `audiobook.mp3`. Rerun the same command after an interruption to resume.
 

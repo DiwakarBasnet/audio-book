@@ -67,3 +67,7 @@ See [MODAL.md](MODAL.md) for deployment, comparison, and the precise resume guar
 ## Reference narration with Chatterbox
 
 `CHATTERBOX_REFERENCE_AUDIO` optionally points to a local PCM16 WAV. Deployment validates and copies that sample into the image; the remote engine validates it again and prepares speaker conditionals once at startup. Every generated subsegment then reuses that narrator. The sample's content hash participates in engine identity, preventing resume/cache reuse across different reference voices. No reference path or audio upload is accepted by the public HTTP API: narrator selection is a deployment configuration. See [MODAL.md](MODAL.md) for sample preparation and commands.
+
+## Kokoro voice selection per request
+
+The deployment bundles `am_onyx` and `af_heart`. One `KokoroEngine` loads the model and available voice tensors once. `for_voice` returns a request-specific view sharing the model and language pipeline, with the selected tensor and identity; it does not mutate the default narrator. The HTTP contract accepts optional `voice` in synthesis JSON and `/info` query parameters. The remote client uses the same voice in both requests. Local checkpoints and server cache keys therefore distinguish identical text spoken by different voices. Single-voice endpoints reject unsupported voice selection instead of ignoring it.

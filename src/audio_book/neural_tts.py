@@ -1,6 +1,7 @@
 """Optional neural adapters. Heavy libraries are imported only inside Modal images."""
 
 import hashlib
+from copy import copy
 from importlib.metadata import distributions
 import json
 from pathlib import Path
@@ -53,7 +54,7 @@ def write_pcm(target: Path, samples, sample_rate: int) -> None:
 
 class KokoroEngine:
     def __init__(self, directory: Path, voice: str = 'af_heart', speed: float = 1.0,
-                 device: str = 'cuda'):
+                 device: str = 'cuda', voices: tuple[str, ...] | None = None):
         from kokoro import KModel, KPipeline
         import torch
         if not 0.5 <= speed <= 2.0:
@@ -61,16 +62,41 @@ class KokoroEngine:
         if device not in {'cpu', 'cuda'}:
             raise ValueError('Kokoro device must be cpu or cuda.')
         # Initial comparison targets English editions: a = US, b = UK.
-        if voice[:1] not in {'a', 'b'} or not voice.replace('_', '').isalnum():
+        self.available_voices = tuple(dict.fromkeys((voice, *(voices or ()))))
+        if any(name[:1] not in {'a', 'b'} or not name.replace('_', '').isalnum()
+               for name in self.available_voices):
             raise ValueError('Choose a US/UK English Kokoro voice, e.g. af_heart or bf_emma.')
-        files = [directory / 'config.json', directory / 'kokoro-v1_0.pth',
-                 directory / 'voices' / f'{voice}.pt']
-        self.identity = engine_identity('kokoro', files, {'voice': voice, 'speed': speed, 'device': device})
+        files = [directory / 'config.json', directory / 'kokoro-v1_0.pth']
+        self.default_voice = voice
+        self._identities = {
+            name: engine_identity('kokoro', [*files, directory / 'voices' / f'{name}.pt'],
+                                  {'voice': name, 'speed': speed, 'device': device})
+            for name in self.available_voices
+        }
         model = KModel(repo_id='hexgrad/Kokoro-82M', config=str(files[0]), model=str(files[1]))
         model = model.to(device).eval()
-        self.pipeline = KPipeline(lang_code=voice[0], repo_id='hexgrad/Kokoro-82M', model=model)
-        self.voice = torch.load(files[2], map_location='cpu', weights_only=True)
+        self._pipelines = {
+            lang: KPipeline(lang_code=lang, repo_id='hexgrad/Kokoro-82M', model=model)
+            for lang in {name[0] for name in self.available_voices}
+        }
+        self._voice_packs = {
+            name: torch.load(directory / 'voices' / f'{name}.pt', map_location='cpu', weights_only=True)
+            for name in self.available_voices
+        }
+        self.identity = self._identities[voice]
+        self.pipeline = self._pipelines[voice[0]]
+        self.voice = self._voice_packs[voice]
         self.speed = speed
+
+    def for_voice(self, voice: str):
+        if voice not in self.available_voices:
+            raise ValueError(f'Unknown Kokoro voice {voice!r}. Choose: {", ".join(self.available_voices)}')
+        # Request-specific view: share weights, without changing another request's narrator.
+        selected = copy(self)
+        selected.identity = self._identities[voice]
+        selected.pipeline = self._pipelines[voice[0]]
+        selected.voice = self._voice_packs[voice]
+        return selected
 
     def synthesize(self, text: str, target: Path) -> None:
         import numpy as np

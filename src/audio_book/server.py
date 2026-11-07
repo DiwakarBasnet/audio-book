@@ -19,6 +19,7 @@ from .tts import PiperEngine, SpeechEngine
 
 class SpeechRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
+    voice: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 def create_app(
@@ -38,22 +39,37 @@ def create_app(
 
     application = FastAPI(title='Audiobook TTS', lifespan=lifespan)
 
+    def resolve_engine(voice: str | None) -> SpeechEngine:
+        engine = application.state.engine
+        if voice is None:
+            return engine
+        selector = getattr(engine, 'for_voice', None)
+        if selector is None:
+            raise HTTPException(status_code=400, detail='This endpoint does not support voice selection.')
+        try:
+            return selector(voice)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @application.get('/health')
     def health():
         return {'status': 'ok'}
 
     @application.get('/info')
-    def info():
-        return {'identity': application.state.engine.identity}
+    def info(voice: str | None = None):
+        engine = resolve_engine(voice)
+        return {'identity': engine.identity,
+                'voices': getattr(engine, 'available_voices', []),
+                'default_voice': getattr(engine, 'default_voice', None)}
 
     @application.post('/synthesize')
     def synthesize(request: SpeechRequest):
         if not request.text.strip():
             raise HTTPException(status_code=422, detail='Text must contain readable characters')
+        engine = resolve_engine(request.voice)
         if not application.state.lock.acquire(blocking=False):
             raise HTTPException(status_code=429, detail='Model busy; retry later')
         try:
-            engine = application.state.engine
             key = hashlib.sha256(json.dumps([engine.identity, request.text],
                                             ensure_ascii=False).encode()).hexdigest()
             cached = cache_dir / f'{key}.wav' if cache_dir is not None else None

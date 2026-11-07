@@ -15,6 +15,7 @@ chatterbox_cache = modal.Volume.from_name('audiobook-chatterbox-audio', create_i
 
 # Change these constants, then redeploy, to change the narrator/settings.
 KOKORO_VOICE = 'am_onyx'
+KOKORO_VOICES = tuple(dict.fromkeys((KOKORO_VOICE, 'af_heart')))
 KOKORO_SPEED = 1.0
 # Set to 'cpu' to deploy Kokoro without requesting a GPU. Redeploy after changing.
 KOKORO_DEVICE = 'cuda'
@@ -42,7 +43,9 @@ kokoro_image = (
         "print('Kokoro imports and English language model OK')\""
     )
     .run_commands(
-        f'hf download hexgrad/Kokoro-82M config.json kokoro-v1_0.pth voices/{KOKORO_VOICE}.pt --local-dir /models/kokoro'
+        'hf download hexgrad/Kokoro-82M config.json kokoro-v1_0.pth '
+        + ' '.join(f'voices/{voice}.pt' for voice in KOKORO_VOICES)
+        + ' --local-dir /models/kokoro'
     )
     .add_local_python_source('audio_book')
 )
@@ -81,7 +84,7 @@ def kokoro():
     from audio_book.server import create_app
     return create_app(
         lambda: KokoroEngine(Path('/models/kokoro'), KOKORO_VOICE, KOKORO_SPEED,
-                             device=KOKORO_DEVICE),
+                             device=KOKORO_DEVICE, voices=KOKORO_VOICES),
         cache_dir=Path('/audio-cache'), commit_cache=kokoro_cache.commit,
     )
 
