@@ -10,6 +10,7 @@ wheels/
 .venv
 
 # Books, voices, and generated audio stay local
+temp/
 books/
 models/
 voices/
